@@ -1,0 +1,323 @@
+This code create 4 subnet 2 public and 2 private subnets 
+# VPC
+resource "aws_vpc" "main" {
+  cidr_block = "10.10.0.0/16"
+  tags = { Name = "My-Vpc" }
+}
+
+# Public Subnets
+resource "aws_subnet" "public" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.10.1.0/24"
+  map_public_ip_on_launch = true
+  availability_zone       = "us-east-1a"
+  tags = { Name = "Public-Subnet-1" }
+}
+
+resource "aws_subnet" "public1" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.10.2.0/24"
+  map_public_ip_on_launch = true
+  availability_zone       = "us-east-1b"
+  tags = { Name = "Public-Subnet-2" }
+}
+
+# Private Subnets
+resource "aws_subnet" "private" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.10.3.0/24"
+  availability_zone = "us-east-1a"
+  tags = { Name = "Private-Subnet-1" }
+}
+
+resource "aws_subnet" "private1" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.10.4.0/24"
+  availability_zone = "us-east-1b"
+  tags = { Name = "Private-Subnet-2" }
+}
+
+# Security Groups
+resource "aws_security_group" "public_sg" {
+  vpc_id = aws_vpc.main.id
+  tags   = { Name = "Public-SG" }
+}
+
+resource "aws_security_group" "private_sg" {
+  vpc_id = aws_vpc.main.id
+  tags   = { Name = "Private-SG" }
+}
+
+
+# InterNet-Gateway
+resource "aws_internet_gateway" "my-IGW" {
+    vpc_id = aws_vpc.main.id
+    tags = {
+      Name = "My-IGW"
+    }
+  
+}
+
+# Route-Table
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+  tags = {
+    Name = "MRT"
+  }
+}
+
+# Edit-Routes
+resource "aws_route" "public_internet_access" {
+  route_table_id         = aws_route_table.public.id
+  destination_cidr_block = "0.0.0.0/0"  # Default route for internet traffic
+  gateway_id             = aws_internet_gateway.my-IGW.id
+}
+
+# Subnet-Association Public-Subnet-01 with Public Route Table
+resource "aws_route_table_association" "public_assoc" {
+  subnet_id      = aws_subnet.public.id
+  route_table_id = aws_route_table.public.id
+}
+# Associate Public-Subnet-02 with Public Route Table
+resource "aws_route_table_association" "public_assoc_2" {
+  subnet_id      = aws_subnet.public1.id
+  route_table_id = aws_route_table.public.id
+}
+
+# Allocate an Elastic IP for the NAT Gateway
+resource "aws_eip" "nat_eip" {
+  domain = "vpc"
+  tags = {
+    Name = "NAT-EIP"
+  }
+}
+
+# Create the NAT Gateway in the Public Subnet
+resource "aws_nat_gateway" "nat_gw" {
+  allocation_id = aws_eip.nat_eip.id
+  subnet_id     = aws_subnet.public.id
+
+  tags = {
+    Name = "NAT-Gateway"
+  }
+
+  depends_on = [aws_internet_gateway.my-IGW]
+}
+
+# Private Route Table
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+  tags = {
+    Name = "CRT"
+  }
+}
+
+# Edit-Routes
+resource "aws_route" "private_nat_route" {
+  route_table_id         = aws_route_table.private.id
+  destination_cidr_block = "0.0.0.0/0"  # Default route for internet traffic
+  nat_gateway_id         = aws_nat_gateway.nat_gw.id
+}
+
+# Subnet-Association First Private Subnet
+resource "aws_route_table_association" "private_assoc" {
+  subnet_id      = aws_subnet.private.id
+  route_table_id = aws_route_table.private.id
+}
+# Subnet-Association Second Private Subnet
+resource "aws_route_table_association" "private_assoc2" {
+  subnet_id      = aws_subnet.private1.id
+  route_table_id = aws_route_table.private.id
+}
+
+
+
+
+
+
+this code for create Ec2 instance connected to the simmilar subnets like public to public private 2 private 
+
+resource "aws_key_pair" "deployer" {
+  key_name = "mykey"
+  public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHnYF9uo0X27RhxZKWFAFhhuNvR6w+dWXtwZLdDgxyTA Sanket@LAPTOP-QUR2N0FG"
+}
+
+data "aws_ami" "amazon_linux" {
+  most_recent = true
+
+  filter {
+    name   = "name"
+    values = ["al2023-ami-*"]
+  }
+
+  filter {
+    name   = "architecture"
+    values = ["x86_64"]
+  }
+
+  owners = ["amazon"]
+}
+
+provider "aws" {
+  region = var.aws_region
+}
+
+# Fetch existing VPC by name or ID
+data "aws_vpc" "existing" {
+  filter {
+    name   = "cidr-block"
+    values = [var.vpc_cidr]
+  }
+}
+
+# Fetch Public and Private Subnets
+data "aws_subnet" "public_subnet_1" {
+  filter {
+    name   = "tag:Name"
+    values = ["Public-Subnet-1"]
+  }
+}
+
+data "aws_subnet" "public_subnet_2" {
+  filter {
+    name   = "tag:Name"
+    values = ["Public-Subnet-2"]
+  }
+}
+
+data "aws_subnet" "private_subnet_1" {
+  filter {
+    name   = "tag:Name"
+    values = ["Private-Subnet-1"]
+  }
+}
+
+data "aws_subnet" "private_subnet_2" {
+  filter {
+    name   = "tag:Name"
+    values = ["Private-Subnet-2"]
+  }
+}
+
+# Security Group for Public Instances
+resource "aws_security_group" "public_sg" {
+  vpc_id = data.aws_vpc.existing.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "Public-EC2-SG"
+  }
+}
+
+# Security Group for Private Instances (Only allows internal traffic)
+resource "aws_security_group" "private_sg" {
+  vpc_id = data.aws_vpc.existing.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "Private-EC2-SG"
+  }
+}
+
+# User Data Script for Nginx Setup
+locals {
+  user_data = <<-EOT
+    #!/bin/bash
+    sudo yum install nginx -y
+    sudo systemctl start nginx
+    sudo systemctl enable nginx
+  EOT
+}
+
+# Create Public EC2 Instances
+resource "aws_instance" "public_instance_1" {
+  ami           = data.aws_ami.amazon_linux.id
+  instance_type = var.instance_type
+  key_name = aws_key_pair.deployer.key_name
+  subnet_id     = data.aws_subnet.public_subnet_1.id
+  vpc_security_group_ids = [aws_security_group.public_sg.id]
+  user_data     = local.user_data
+
+  tags = {
+    Name = "Public-Instance-1"
+  }
+}
+
+resource "aws_instance" "public_instance_2" {
+  ami           = data.aws_ami.amazon_linux.id
+  instance_type = var.instance_type
+  key_name = aws_key_pair.deployer.key_name
+  subnet_id     = data.aws_subnet.public_subnet_2.id
+  vpc_security_group_ids = [aws_security_group.public_sg.id]
+  user_data     = local.user_data
+
+  tags = {
+    Name = "Public-Instance-2"
+  }
+}
+
+resource "aws_instance" "private_instance_1" {
+  ami           = data.aws_ami.amazon_linux.id
+  instance_type = var.instance_type
+  key_name = aws_key_pair.deployer.key_name
+  subnet_id     = data.aws_subnet.private_subnet_1.id
+  vpc_security_group_ids = [aws_security_group.public_sg.id]
+  user_data     = local.user_data
+
+  tags = {
+    Name = "Private-Instance-1"
+  }
+}
+
+resource "aws_instance" "private_instance_2" {
+  ami           = data.aws_ami.amazon_linux.id
+  instance_type = var.instance_type
+  key_name = aws_key_pair.deployer.key_name
+  subnet_id     = data.aws_subnet.private_subnet_2.id
+  vpc_security_group_ids = [aws_security_group.public_sg.id]
+  user_data     = local.user_data
+
+  tags = {
+    Name = "Private-Instance-2"
+  }
+}
